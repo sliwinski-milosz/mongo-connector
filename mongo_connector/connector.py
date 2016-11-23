@@ -1170,6 +1170,25 @@ def log_startup_info():
             'outside of Python\'s datetime limit.', pymongo.__version__)
 
 
+def register_shutdown_handlers(connector):
+    """register a signal handlers to cleanup the connector gracefully"""
+
+    class SignalHandler(object):
+
+        def __init__(self, s_name, connector):
+            self.s_name = s_name
+            self.connector_obj = connector
+
+        def __call__(self, signum, frame):
+            self.connector_obj.signal = (self.s_name, signum)
+            self.connector_obj.can_run = False
+
+    for s_name, s in {"SIGINT": signal.SIGINT,
+                      "SIGTERM": signal.SIGTERM}.iteritems():
+        signal_handler = SignalHandler(s_name, connector)
+        signal.signal(s, signal_handler)
+
+
 @log_fatal_exceptions
 def main():
     """ Starts the mongo connector (assuming CLI)
@@ -1182,22 +1201,13 @@ def main():
 
     connector = Connector.from_config(conf)
 
-    # register a SIGTERM handler to cleanup the connector gracefully
-    def sigterm_handler(signum, frame):
-        connector.signal = ('SIGTERM', signum)
-        connector.can_run = False
-    signal.signal(signal.SIGTERM, sigterm_handler)
+    register_shutdown_handlers(connector)
 
     connector.start()
 
     while True:
-        try:
-            time.sleep(3)
-            if not connector.is_alive():
-                break
-        except KeyboardInterrupt:
-            LOG.info("Caught keyboard interrupt, exiting!")
-            connector.join()
+        time.sleep(3)
+        if not connector.is_alive():
             break
 
 if __name__ == '__main__':
